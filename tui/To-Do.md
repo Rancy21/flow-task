@@ -1,57 +1,68 @@
-## Phase 1: Core infrastructure (COMPLETE ✅)
+## Phase 5: Android App (COMPLETE ✅)
 
-### Tasks
-- [x] Go module init (`github.com/Rancy21/flowtask`)
-- [x] Data models: Task, Note, Priority, TaskStatus
-- [x] DB layer: SQLite open, WAL/FK pragmas, migration runner, schema
-- [x] `001_init.sql` migration (tasks + notes tables)
-- [x] `TaskRepo`: GetToday, GetWeek, GetInbox, GetByID, Create, Update, MarkDone, Schedule, Delete
-- [x] `NoteRepo`: GetAll, GetByTask, Create, Delete
-- [x] `styles.go`: Palette, priority badges, layout styles, status bar, empty state, boxes
-- [x] `app.go`: Root model, tab routing (1-4 / tab), key bindings, header/status bar
+- [x] Project scaffold (Gradle 8.11.1, AGP 8.7.2, Kotlin 2.1.0)
+- [x] Room entities, DAOs, database, repositories
+- [x] Koin DI, theme, 4-tab navigation
+- [x] All screens: Today, Week, Inbox, Notes
+- [x] Task Editor with notes, Inbox Editor
+- [x] All bugfixes (FAB, stale state, loading bar, keyboard, XML, icons, .gitignore)
+- [x] Commit & push (54 files)
 
 ---
 
-## Phase 2: UI Screens (COMPLETE ✅)
-
-### Tasks
-- [x] Create `internal/ui/today.go` — TodayModel
-- [x] Create `internal/ui/week.go` — WeekModel
-- [x] Create `internal/ui/index.go` — IndexModel (later refactored to Inbox)
-- [x] Create `internal/ui/notes.go` — NotesModel
-- [x] Create `internal/ui/editor.go` — EditorModel, EditorDoneMsg, EditorCancelMsg
-- [x] Create `cmd/main.go` — entrypoint wiring DB + repos + Bubble Tea
-- [x] Compile and fix issues
-- [x] Run and manual test
-
----
-
-## Phase 3: Inbox Refactor (COMPLETE ✅)
+## Phase 6: Sync (Supabase REST API)
 
 ### Why
-The Index tab was originally using the Task model with INBOX status. The user wanted:
-- Inbox items are NOT tasks — lightweight capture only (title + description)
-- Separate `inbox` table, `InboxItem` model, `InboxRepo`
-- Dedicated inbox editor (no priority, date, notes)
-- No auto-promote — user manually creates tasks from inbox content
+- Local-only is fine for Phase 1-2, but user needs TUI ↔ Android sync
+- PowerSync rejected: no Go SDK. Supabase REST API is simpler and works for both.
+- Same Supabase project, same tables, direct REST API calls
+- Last-write-wins conflict resolution via `updated_at` column
 
-### Changes
-- [x] Add `InboxItem` model (`internal/model/inbox.go`)
-- [x] Add `InboxRepo` (`internal/repository/inbox_repo.go`)
-- [x] Add `002_inbox.sql` migration + embed in `db.go`
-- [x] Rewrite `index.go` → InboxModel using InboxItem + InboxRepo
-- [x] Create `inbox_editor.go` — simple title+description modal
-- [x] Update `app.go`: TabInbox, inbox editor routing, OpenInboxEditorMsg, InboxEditorDoneMsg/CancelMsg
-- [x] Update `cmd/main.go`: wire InboxRepo
-- [x] Update `AGENTS.md`: InboxItem model, Inbox section, Inbox Editor section, conventions
-- [x] Compile
+### Plan
+1. Add `updated_at` column to all local SQLite + Supabase tables (done on Supabase) ✅
+2. Go TUI: Supabase HTTP client + sync logic
+3. Android: HTTP client + sync logic
+4. Testing: cross-platform CRUD + offline + conflicts
 
----
+### Step 1: Supabase Setup (COMPLETE ✅)
+- [x] Create Supabase project
+- [x] Create Postgres tables (tasks, notes, inbox) with `updated_at`
+- [x] Verify REST API accessibility with publishable key
+- [x] Push migrations via `supabase db push`
 
-## Phase 4: Polish & Git (NEXT)
+### Step 2: Go TUI Sync Client — Pull & Push (COMPLETE ✅)
+- [x] Add `updated_at` column migration (003_add_updated_at.sql)
+- [x] Update Task, Note, InboxItem models with UpdatedAt field
+- [x] Update all repositories: SELECT queries, INSERT, UPDATE with updated_at
+- [x] Add Upsert() methods to all repos for sync pulls
+- [x] Create `internal/sync/` package with Supabase HTTP client
+- [x] Pull: GET /rest/v1/tasks, /notes, /inbox → upsert locally
+- [x] Push: POST/PATCH tasks, notes, inbox items to Supabase
+- [x] Delete: DELETE from Supabase on local delete
+- [x] Wire sync into main.go: startup pull + 30s background poll
+- [x] Wire sync push into task editor + inbox editor
+- [x] Fix: notes not pushing to Supabase after creation
+- [x] Verified: pull, push, delete work against live Supabase
 
-### Tasks
-- [ ] Test inbox capture/edit/delete flow
-- [ ] `go mod tidy` 
-- [ ] `git init` + initial commit
-- [ ] Add `.gitignore` (verify contents)
+### Step 3: Android Sync Client (COMPLETE ✅)
+- [x] Add OkHttp dependency
+- [x] Add `updatedAt` to all Room entities (TaskEntity, NoteEntity, InboxEntity)
+- [x] Room migration 1→2: add `updated_at` columns
+- [x] Create `SyncClient` with pull/push/delete via Supabase REST API
+- [x] Add upsert methods to all repositories (check-then-insert-or-update)
+- [x] Wire sync push into TaskEditorViewModel (task + notes)
+- [x] Wire sync push into InboxEditorViewModel
+- [x] Startup sync pull + 30s background sync in FlowTaskApp
+- [x] Fix: add INTERNET permission to AndroidManifest
+- [x] Build verified ✅
+- [x] Tested: pull, push working on device
+
+### Step 4: Testing
+- [ ] Test: create task on TUI → appears on Android
+- [ ] Test: create task on Android → appears on TUI
+- [ ] Test: edit task on TUI → updated on Android
+- [ ] Test: delete task on Android → removed from TUI
+- [ ] Test: offline edit on Android → syncs when back online
+- [ ] Test: conflict (edit same task on both while offline) → last-write-wins
+- [ ] Test: notes sync correctly
+- [ ] Test: inbox items sync correctly

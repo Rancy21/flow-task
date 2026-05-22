@@ -16,4 +16,12 @@ class InboxRepository(private val inboxDao: InboxDao) {
     suspend fun delete(item: InboxEntity) = inboxDao.delete(item)
 
     suspend fun deleteById(id: String) = inboxDao.deleteById(id)
+
+    suspend fun upsert(item: InboxEntity) {
+        if (inboxDao.getById(item.id) != null) {
+            inboxDao.update(item)
+        } else {
+            inboxDao.insert(item)
+        }
+    }
 }

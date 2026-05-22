@@ -11,6 +11,7 @@ type Task struct {
 	ScheduledDate *time.Time // nil = lives in Index
 	CreatedAt     time.Time
 	CompletedAt   *time.Time
+	UpdatedAt     string // RFC 3339, used for sync conflict resolution
 }
 
 func (t *Task) IsToday() bool {

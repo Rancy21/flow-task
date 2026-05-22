@@ -7,4 +7,5 @@ type Note struct {
 	TaskID    string
 	Content   string
 	CreatedAt time.Time
+	UpdatedAt string // RFC 3339, used for sync conflict resolution
 }

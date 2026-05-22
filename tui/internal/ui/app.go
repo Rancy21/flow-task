@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/Rancy21/flowtask/internal/repository"
+	"github.com/Rancy21/flowtask/internal/sync"
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -70,6 +71,7 @@ type App struct {
 	taskRepo  *repository.TaskRepo
 	noteRepo  *repository.NoteRepo
 	inboxRepo *repository.InboxRepo
+	sync      *sync.Client
 
 	activeTab Tab
 	today     TodayModel
@@ -94,17 +96,19 @@ func NewApp(
 	taskRepo *repository.TaskRepo,
 	noteRepo *repository.NoteRepo,
 	inboxRepo *repository.InboxRepo,
+	sync *sync.Client,
 ) App {
 	return App{
 		taskRepo:  taskRepo,
 		noteRepo:  noteRepo,
 		inboxRepo: inboxRepo,
+		sync:      sync,
 		today:     NewTodayModel(taskRepo),
 		week:      NewWeekModel(taskRepo),
 		inbox:     NewInboxModel(inboxRepo),
 		notes:     NewNotesModel(taskRepo, noteRepo),
-		editor:      NewEditorModel(taskRepo, noteRepo),
-		inboxEditor: NewInboxEditorModel(inboxRepo),
+		editor:      NewEditorModel(taskRepo, noteRepo, sync),
+		inboxEditor: NewInboxEditorModel(inboxRepo, sync),
 	}
 }
 
@@ -176,12 +180,12 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// In inbox tab, n opens the inbox capture editor.
 			if a.activeTab == TabInbox {
 				a.inboxEditorOpen = true
-				a.inboxEditor = NewInboxEditorModel(a.inboxRepo)
+				a.inboxEditor = NewInboxEditorModel(a.inboxRepo, a.sync)
 				a.inboxEditor.SetSize(a.width, a.contentHeight())
 				cmds = append(cmds, a.inboxEditor.Init())
 			} else {
 				a.editorOpen = true
-				a.editor = NewEditorModel(a.taskRepo, a.noteRepo)
+				a.editor = NewEditorModel(a.taskRepo, a.noteRepo, a.sync)
 				a.editor.SetSize(a.width, a.contentHeight())
 				cmds = append(cmds, a.editor.Init())
 			}
@@ -190,7 +194,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// ── Task editor messages ─────────────────────────────────────────────────
 	case OpenEditorMsg:
 		a.editorOpen = true
-		a.editor = NewEditorModel(a.taskRepo, a.noteRepo)
+		a.editor = NewEditorModel(a.taskRepo, a.noteRepo, a.sync)
 		if msg.TaskID != "" {
 			cmds = append(cmds, a.editor.LoadTask(msg.TaskID))
 		}
@@ -214,7 +218,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// ── Inbox editor messages ────────────────────────────────────────────────
 	case OpenInboxEditorMsg:
 		a.inboxEditorOpen = true
-		a.inboxEditor = NewInboxEditorModel(a.inboxRepo)
+		a.inboxEditor = NewInboxEditorModel(a.inboxRepo, a.sync)
 		if msg.ItemID != "" {
 			cmds = append(cmds, a.inboxEditor.LoadItem(msg.ItemID))
 		}

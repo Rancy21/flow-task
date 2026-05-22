@@ -21,4 +21,12 @@ class TaskRepository(private val taskDao: TaskDao) {
     suspend fun delete(task: TaskEntity) = taskDao.delete(task)
 
     suspend fun deleteById(id: String) = taskDao.deleteById(id)
+
+    suspend fun upsert(task: TaskEntity) {
+        if (taskDao.getById(task.id) != null) {
+            taskDao.update(task)
+        } else {
+            taskDao.insert(task)
+        }
+    }
 }

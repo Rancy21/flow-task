@@ -10,4 +10,5 @@ type InboxItem struct {
 	Title       string
 	Description string
 	CreatedAt   time.Time
+	UpdatedAt   string // RFC 3339, used for sync conflict resolution
 }

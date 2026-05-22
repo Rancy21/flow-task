@@ -10,4 +10,5 @@ data class InboxEntity(
     val title: String,
     val description: String?,
     @ColumnInfo(name = "created_at") val createdAt: String,
+    @ColumnInfo(name = "updated_at") val updatedAt: String = "",
 )

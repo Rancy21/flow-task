@@ -9,7 +9,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// InboxRepo handles all inbox item persistence.
 type InboxRepo struct {
 	db *sql.DB
 }
@@ -18,10 +17,9 @@ func NewInboxRepo(db *sql.DB) *InboxRepo {
 	return &InboxRepo{db: db}
 }
 
-// GetAll returns all inbox items, newest first.
 func (r *InboxRepo) GetAll() ([]model.InboxItem, error) {
 	rows, err := r.db.Query(`
-		SELECT id, title, description, created_at
+		SELECT id, title, description, created_at, updated_at
 		FROM inbox
 		ORDER BY created_at DESC
 	`)
@@ -34,8 +32,8 @@ func (r *InboxRepo) GetAll() ([]model.InboxItem, error) {
 	for rows.Next() {
 		var it model.InboxItem
 		var desc sql.NullString
-		var createdAt string
-		if err := rows.Scan(&it.ID, &it.Title, &desc, &createdAt); err != nil {
+		var createdAt, updatedAt string
+		if err := rows.Scan(&it.ID, &it.Title, &desc, &createdAt, &updatedAt); err != nil {
 			return nil, err
 		}
 		it.Description = desc.String
@@ -44,20 +42,20 @@ func (r *InboxRepo) GetAll() ([]model.InboxItem, error) {
 			return nil, err
 		}
 		it.CreatedAt = t
+		it.UpdatedAt = updatedAt
 		items = append(items, it)
 	}
 	return items, rows.Err()
 }
 
-// GetByID returns a single inbox item.
 func (r *InboxRepo) GetByID(id string) (*model.InboxItem, error) {
 	var it model.InboxItem
 	var desc sql.NullString
-	var createdAt string
+	var createdAt, updatedAt string
 	err := r.db.QueryRow(`
-		SELECT id, title, description, created_at
+		SELECT id, title, description, created_at, updated_at
 		FROM inbox WHERE id = ?
-	`, id).Scan(&it.ID, &it.Title, &desc, &createdAt)
+	`, id).Scan(&it.ID, &it.Title, &desc, &createdAt, &updatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -67,38 +65,48 @@ func (r *InboxRepo) GetByID(id string) (*model.InboxItem, error) {
 		return nil, err
 	}
 	it.CreatedAt = t
+	it.UpdatedAt = updatedAt
 	return &it, nil
 }
 
-// Create inserts a new inbox item.
 func (r *InboxRepo) Create(title, description string) (*model.InboxItem, error) {
+	now := time.Now()
 	it := &model.InboxItem{
 		ID:          uuid.New().String(),
 		Title:       title,
 		Description: description,
-		CreatedAt:   time.Now(),
+		CreatedAt:   now,
+		UpdatedAt:   now.Format(time.RFC3339),
 	}
 	_, err := r.db.Exec(`
-		INSERT INTO inbox (id, title, description, created_at)
-		VALUES (?, ?, ?, ?)
-	`, it.ID, it.Title, nullInboxString(it.Description), it.CreatedAt.Format(time.RFC3339))
+		INSERT INTO inbox (id, title, description, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?)
+	`, it.ID, it.Title, nullInboxString(it.Description), it.CreatedAt.Format(time.RFC3339), it.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("create inbox item: %w", err)
 	}
 	return it, nil
 }
 
-// Update saves changes to an existing inbox item.
 func (r *InboxRepo) Update(it *model.InboxItem) error {
+	now := time.Now().Format(time.RFC3339)
 	_, err := r.db.Exec(`
-		UPDATE inbox SET title=?, description=? WHERE id=?
-	`, it.Title, nullInboxString(it.Description), it.ID)
+		UPDATE inbox SET title=?, description=?, updated_at=? WHERE id=?
+	`, it.Title, nullInboxString(it.Description), now, it.ID)
 	return err
 }
 
-// Delete removes an inbox item.
 func (r *InboxRepo) Delete(id string) error {
 	_, err := r.db.Exec(`DELETE FROM inbox WHERE id=?`, id)
+	return err
+}
+
+// Upsert inserts an inbox item or replaces if already exists (used during sync pull).
+func (r *InboxRepo) Upsert(it *model.InboxItem) error {
+	_, err := r.db.Exec(`
+		INSERT OR REPLACE INTO inbox (id, title, description, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?)
+	`, it.ID, it.Title, nullInboxString(it.Description), it.CreatedAt.Format(time.RFC3339), it.UpdatedAt)
 	return err
 }
 

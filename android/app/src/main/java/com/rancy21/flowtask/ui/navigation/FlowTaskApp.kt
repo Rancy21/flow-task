@@ -5,18 +5,32 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import com.rancy21.flowtask.data.sync.SyncClient
 import com.rancy21.flowtask.ui.editor.TaskEditorScreen
 import com.rancy21.flowtask.ui.inbox.InboxScreen
 import com.rancy21.flowtask.ui.inboxeditor.InboxEditorScreen
 import com.rancy21.flowtask.ui.notes.NotesScreen
 import com.rancy21.flowtask.ui.today.TodayScreen
 import com.rancy21.flowtask.ui.week.WeekScreen
+import kotlinx.coroutines.delay
+import org.koin.compose.koinInject
 
 @Composable
 fun FlowTaskApp() {
     var currentScreen by remember { mutableStateOf<Screen>(Screen.Today) }
     var editingTaskId by remember { mutableStateOf<String?>(null) }
     var editingInboxId by remember { mutableStateOf<String?>(null) }
+
+    // Background sync
+    val syncClient: SyncClient = koinInject()
+    LaunchedEffect(Unit) {
+        delay(2000)
+        syncClient.pullAll()
+        while (true) {
+            delay(30_000)
+            syncClient.pullAll()
+        }
+    }
 
     // Editor overlays take priority
     if (editingTaskId != null || editingTaskId == "") {

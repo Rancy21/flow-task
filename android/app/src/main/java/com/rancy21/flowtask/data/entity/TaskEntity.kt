@@ -14,4 +14,5 @@ data class TaskEntity(
     @ColumnInfo(name = "scheduled_date") val scheduledDate: String?,
     @ColumnInfo(name = "created_at") val createdAt: String,
     @ColumnInfo(name = "completed_at") val completedAt: String?,
+    @ColumnInfo(name = "updated_at") val updatedAt: String = "",
 )

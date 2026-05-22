@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/Rancy21/flowtask/internal/repository"
+	"github.com/Rancy21/flowtask/internal/sync"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -51,6 +52,7 @@ var inboxEditKeys = inboxEditKeyMap{
 
 type InboxEditorModel struct {
 	repo       *repository.InboxRepo
+	sync       *sync.Client
 	itemID     string // empty = new item
 	mode       string // "new" or "edit"
 	titleInput textinput.Model
@@ -62,7 +64,7 @@ type InboxEditorModel struct {
 	saving     bool
 }
 
-func NewInboxEditorModel(repo *repository.InboxRepo) InboxEditorModel {
+func NewInboxEditorModel(repo *repository.InboxRepo, sync *sync.Client) InboxEditorModel {
 	ti := textinput.New()
 	ti.Placeholder = "What's on your mind?"
 	ti.CharLimit = 200
@@ -75,6 +77,7 @@ func NewInboxEditorModel(repo *repository.InboxRepo) InboxEditorModel {
 
 	return InboxEditorModel{
 		repo:        repo,
+		sync:        sync,
 		mode:        "new",
 		titleInput:  ti,
 		descInput:   di,
@@ -323,15 +326,17 @@ func (m InboxEditorModel) save() tea.Cmd {
 			if err := m.repo.Update(item); err != nil {
 				return inboxEditorErrMsg{err}
 			}
+			_ = m.sync.PushInboxItem(item)
 			return InboxEditorDoneMsg{}
 		}
 	}
 
 	return func() tea.Msg {
-		_, err := m.repo.Create(title, desc)
+		item, err := m.repo.Create(title, desc)
 		if err != nil {
 			return inboxEditorErrMsg{err}
 		}
+		_ = m.sync.PushInboxItem(item)
 		return InboxEditorDoneMsg{}
 	}
 }

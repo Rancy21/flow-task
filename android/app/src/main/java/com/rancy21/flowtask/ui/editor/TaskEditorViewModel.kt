@@ -6,6 +6,7 @@ import com.rancy21.flowtask.data.entity.NoteEntity
 import com.rancy21.flowtask.data.entity.TaskEntity
 import com.rancy21.flowtask.data.repository.NoteRepository
 import com.rancy21.flowtask.data.repository.TaskRepository
+import com.rancy21.flowtask.data.sync.SyncClient
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.util.UUID
@@ -13,6 +14,7 @@ import java.util.UUID
 class TaskEditorViewModel(
     private val taskRepository: TaskRepository,
     private val noteRepository: NoteRepository,
+    private val syncClient: SyncClient,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(TaskEditorUiState())
@@ -84,6 +86,7 @@ class TaskEditorViewModel(
                 createdAt = java.time.Instant.now().toString(),
             )
             noteRepository.save(note)
+            syncClient.pushNote(note)
             _uiState.update { it.copy(newNoteContent = "") }
         }
     }
@@ -126,6 +129,9 @@ class TaskEditorViewModel(
             }
 
             taskRepository.save(task)
+
+            // Push to Supabase
+            syncClient.pushTask(task)
 
             val pendingNote = state.newNoteContent.trim()
             if (pendingNote.isNotBlank()) {

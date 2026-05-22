@@ -23,4 +23,5 @@ data class NoteEntity(
     @ColumnInfo(name = "task_id") val taskId: String,
     val content: String,
     @ColumnInfo(name = "created_at") val createdAt: String,
+    @ColumnInfo(name = "updated_at") val updatedAt: String = "",
 )

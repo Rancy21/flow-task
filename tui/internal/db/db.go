@@ -74,6 +74,7 @@ func migrate(db *sql.DB) error {
 	}{
 		{1, migration001},
 		{2, migration002},
+		{3, migration003},
 	}
 
 	for _, m := range migrations {
@@ -135,4 +136,11 @@ CREATE TABLE IF NOT EXISTS inbox (
 );
 
 CREATE INDEX IF NOT EXISTS idx_inbox_created_at ON inbox(created_at);
+`
+
+// migration003 adds updated_at column for sync conflict resolution.
+const migration003 = `
+ALTER TABLE tasks  ADD COLUMN updated_at TEXT NOT NULL DEFAULT '';
+ALTER TABLE notes  ADD COLUMN updated_at TEXT NOT NULL DEFAULT '';
+ALTER TABLE inbox  ADD COLUMN updated_at TEXT NOT NULL DEFAULT '';
 `

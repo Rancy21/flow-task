@@ -4,12 +4,14 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.rancy21.flowtask.data.entity.InboxEntity
 import com.rancy21.flowtask.data.repository.InboxRepository
+import com.rancy21.flowtask.data.sync.SyncClient
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.util.UUID
 
 class InboxEditorViewModel(
     private val inboxRepository: InboxRepository,
+    private val syncClient: SyncClient,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(InboxEditorUiState())
@@ -64,6 +66,7 @@ class InboxEditorViewModel(
             }
 
             inboxRepository.save(item)
+            syncClient.pushInboxItem(item)
         }
         return true
     }

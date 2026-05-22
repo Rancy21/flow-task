@@ -4,6 +4,7 @@ import com.rancy21.flowtask.data.database.FlowTaskDatabase
 import com.rancy21.flowtask.data.repository.InboxRepository
 import com.rancy21.flowtask.data.repository.NoteRepository
 import com.rancy21.flowtask.data.repository.TaskRepository
+import com.rancy21.flowtask.data.sync.SyncClient
 import com.rancy21.flowtask.ui.editor.TaskEditorViewModel
 import com.rancy21.flowtask.ui.inbox.InboxViewModel
 import com.rancy21.flowtask.ui.inboxeditor.InboxEditorViewModel
@@ -24,10 +25,12 @@ val appModule = module {
     single { NoteRepository(get()) }
     single { InboxRepository(get()) }
 
+    single { SyncClient(get(), get(), get()) }
+
     viewModel { TodayViewModel(get()) }
     viewModel { WeekViewModel(get()) }
     viewModel { InboxViewModel(get()) }
     viewModel { NotesViewModel(get(), get()) }
-    viewModel { TaskEditorViewModel(get(), get()) }
-    viewModel { InboxEditorViewModel(get()) }
+    viewModel { TaskEditorViewModel(get(), get(), get()) }
+    viewModel { InboxEditorViewModel(get(), get()) }
 }

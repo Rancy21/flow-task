@@ -7,6 +7,7 @@ import (
 
 	"github.com/Rancy21/flowtask/internal/model"
 	"github.com/Rancy21/flowtask/internal/repository"
+	"github.com/Rancy21/flowtask/internal/sync"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -69,8 +70,9 @@ var editorKeys = editorKeyMap{
 // ── Model ─────────────────────────────────────────────────────────────────────
 
 type EditorModel struct {
-	taskRepo *repository.TaskRepo
-	noteRepo *repository.NoteRepo
+	taskRepo  *repository.TaskRepo
+	noteRepo  *repository.NoteRepo
+	sync      *sync.Client
 
 	// Editing state
 	taskID string // empty = new task
@@ -97,7 +99,7 @@ type EditorModel struct {
 	saving bool
 }
 
-func NewEditorModel(taskRepo *repository.TaskRepo, noteRepo *repository.NoteRepo) EditorModel {
+func NewEditorModel(taskRepo *repository.TaskRepo, noteRepo *repository.NoteRepo, sync *sync.Client) EditorModel {
 	ti := textinput.New()
 	ti.Placeholder = "What needs to be done?"
 	ti.CharLimit = 200
@@ -119,6 +121,7 @@ func NewEditorModel(taskRepo *repository.TaskRepo, noteRepo *repository.NoteRepo
 	return EditorModel{
 		taskRepo:    taskRepo,
 		noteRepo:    noteRepo,
+		sync:        sync,
 		mode:        "new",
 		titleInput:  ti,
 		descInput:   di,
@@ -261,10 +264,11 @@ func (m EditorModel) Update(msg tea.Msg) (EditorModel, tea.Cmd) {
 				if content != "" && m.taskID != "" {
 					m.noteInput.SetValue("")
 					return m, func() tea.Msg {
-						_, err := m.noteRepo.Create(m.taskID, content)
+						n, err := m.noteRepo.Create(m.taskID, content)
 						if err != nil {
 							return editorErrMsg{err}
 						}
+						_ = m.sync.PushNote(n)
 						// Reload notes after creation.
 						notes, err := m.noteRepo.GetByTask(m.taskID)
 						if err != nil {
@@ -608,6 +612,7 @@ func (m EditorModel) save() tea.Cmd {
 			if err := m.taskRepo.Update(task); err != nil {
 				return editorErrMsg{err}
 			}
+			_ = m.sync.PushTask(task)
 			return EditorDoneMsg{}
 		}
 	}
@@ -617,6 +622,7 @@ func (m EditorModel) save() tea.Cmd {
 		if err != nil {
 			return editorErrMsg{err}
 		}
+		_ = m.sync.PushTask(task)
 		return EditorDoneMsg{}
 	}
 }
