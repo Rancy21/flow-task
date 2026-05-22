@@ -25,7 +25,7 @@ local.properties
 
 # Go
 *.db
-flowtask
+/flowtask
 
 AGENTS.md
 tui/Plan.md
