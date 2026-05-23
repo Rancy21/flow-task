@@ -17,22 +17,15 @@ import (
 
 // ── Messages ──────────────────────────────────────────────────────────────────
 
-// EditorDoneMsg is emitted when the editor saves successfully.
 type EditorDoneMsg struct{}
-
-// EditorCancelMsg is emitted when the editor is dismissed without saving.
 type EditorCancelMsg struct{}
-
-// taskLoadedMsg carries an existing task for editing.
 type taskLoadedMsg struct{ task *model.Task }
-
-// editorNotesLoadedMsg carries notes for the task being edited.
 type editorNotesLoadedMsg struct{ notes []model.Note }
-
-// editorErrMsg carries a save/load error.
 type editorErrMsg struct{ err error }
 
 // ── Field indices ─────────────────────────────────────────────────────────────
+
+type editorField int
 
 const (
 	fieldTitle editorField = iota
@@ -41,15 +34,14 @@ const (
 	fieldDate
 	fieldNotes
 	fieldActions
+	fieldCount = 6
 )
-
-type editorField int
 
 // ── Key bindings ──────────────────────────────────────────────────────────────
 
 type editorKeyMap struct {
-	Tab        key.Binding
-	ShiftTab   key.Binding
+	NextField  key.Binding
+	PrevField  key.Binding
 	Save       key.Binding
 	Cancel     key.Binding
 	CycleRight key.Binding
@@ -58,42 +50,111 @@ type editorKeyMap struct {
 }
 
 var editorKeys = editorKeyMap{
-	Tab:        key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next field")),
-	ShiftTab:   key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev field")),
+	NextField:  key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next field")),
+	PrevField:  key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev field")),
 	Save:       key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("ctrl+s", "save")),
 	Cancel:     key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
-	CycleRight: key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "next option")),
-	CycleLeft:  key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "prev option")),
+	CycleRight: key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "next")),
+	CycleLeft:  key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "prev")),
 	AddNote:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "add note")),
 }
+
+// ── Styles (editor-local) ─────────────────────────────────────────────────────
+
+var (
+	editorContainer = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(colorBorder).
+			Padding(1, 3)
+
+	editorHeader = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(colorPrimary).
+			MarginBottom(1)
+
+	fieldLabel = lipgloss.NewStyle().
+			Foreground(colorSubtext).
+			MarginBottom(0)
+
+	fieldLabelActive = lipgloss.NewStyle().
+				Foreground(colorPrimary).
+				Bold(true).
+				MarginBottom(0)
+
+	fieldBox = lipgloss.NewStyle().
+			Border(lipgloss.NormalBorder()).
+			BorderForeground(colorBorder).
+			Padding(0, 1)
+
+	fieldBoxActive = lipgloss.NewStyle().
+			Border(lipgloss.NormalBorder()).
+			BorderForeground(colorPrimary).
+			Padding(0, 1)
+
+	priorityActive = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FFFFFF")).
+			Bold(true).
+			Padding(0, 2)
+
+	priorityInactive = lipgloss.NewStyle().
+				Foreground(colorSubtext).
+				Padding(0, 2)
+
+	dateOptionActive = lipgloss.NewStyle().
+				Foreground(colorPrimary).
+				Bold(true).
+				Underline(true)
+
+	dateOptionInactive = lipgloss.NewStyle().
+				Foreground(colorSubtext)
+
+	editorFooter = lipgloss.NewStyle().
+			Foreground(colorSubtext).
+			MarginTop(1)
+
+	saveBtn = lipgloss.NewStyle().
+		Foreground(colorSuccess).
+		Bold(true).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorBorder).
+		Padding(0, 2)
+
+	saveBtnActive = lipgloss.NewStyle().
+			Foreground(colorDark).
+			Bold(true).
+			Background(colorPrimary).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(colorPrimary).
+			Padding(0, 2)
+
+	divider = lipgloss.NewStyle().
+		Foreground(colorBorder)
+)
 
 // ── Model ─────────────────────────────────────────────────────────────────────
 
 type EditorModel struct {
-	taskRepo  *repository.TaskRepo
-	noteRepo  *repository.NoteRepo
-	sync      *sync.Client
+	taskRepo *repository.TaskRepo
+	noteRepo *repository.NoteRepo
+	sync     *sync.Client
 
-	// Editing state
-	taskID string // empty = new task
-	mode   string // "new" or "edit"
+	taskID string
+	mode   string // "new" | "edit"
 
-	// Inputs
 	titleInput textinput.Model
 	descInput  textarea.Model
 	priority   model.Priority
-	dateType   string // "none", "today", "tomorrow", "pick"
+	dateType   string // "none" | "today" | "tomorrow" | "pick"
 	dateInput  textinput.Model
 	dateValue  *time.Time
 
-	// Notes
 	notes     []model.Note
 	noteInput textinput.Model
 
-	// Navigation
 	activeField editorField
 	width       int
 	height      int
+	innerWidth  int // usable width inside the box
 
 	err    error
 	saving bool
@@ -106,16 +167,17 @@ func NewEditorModel(taskRepo *repository.TaskRepo, noteRepo *repository.NoteRepo
 	ti.Focus()
 
 	di := textarea.New()
-	di.Placeholder = "Details (optional)"
+	di.Placeholder = "Add details..."
 	di.CharLimit = 2000
-	di.SetHeight(4)
+	di.SetHeight(5)
+	di.ShowLineNumbers = true
 
-	diDate := textinput.New()
-	diDate.Placeholder = "YYYY-MM-DD"
-	diDate.CharLimit = 10
+	dd := textinput.New()
+	dd.Placeholder = "YYYY-MM-DD"
+	dd.CharLimit = 10
 
 	ni := textinput.New()
-	ni.Placeholder = "Add a reflection note..."
+	ni.Placeholder = "Reflection note..."
 	ni.CharLimit = 500
 
 	return EditorModel{
@@ -127,7 +189,7 @@ func NewEditorModel(taskRepo *repository.TaskRepo, noteRepo *repository.NoteRepo
 		descInput:   di,
 		priority:    model.P3,
 		dateType:    "none",
-		dateInput:   diDate,
+		dateInput:   dd,
 		noteInput:   ni,
 		activeField: fieldTitle,
 	}
@@ -136,13 +198,16 @@ func NewEditorModel(taskRepo *repository.TaskRepo, noteRepo *repository.NoteRepo
 func (m *EditorModel) SetSize(w, h int) {
 	m.width = w
 	m.height = h
-	m.titleInput.Width = max(20, w-12)
-	m.descInput.SetWidth(max(20, w-12))
-	m.dateInput.Width = 12
-	m.noteInput.Width = max(20, w-12)
+	// Box uses Padding(1,3) + border = 2+6+2 = 10 horizontal overhead
+	// Cap form at 72 chars for readability
+	formW := min(72, w-6)
+	m.innerWidth = formW - 8 // subtract box padding + border
+	m.titleInput.Width = m.innerWidth
+	m.descInput.SetWidth(m.innerWidth)
+	m.dateInput.Width = 14
+	m.noteInput.Width = m.innerWidth
 }
 
-// LoadTask returns a command that fetches a task and its notes for editing.
 func (m *EditorModel) LoadTask(taskID string) tea.Cmd {
 	m.taskID = taskID
 	m.mode = "edit"
@@ -178,11 +243,11 @@ func (m EditorModel) Update(msg tea.Msg) (EditorModel, tea.Cmd) {
 	switch msg := msg.(type) {
 
 	case taskLoadedMsg:
-		t := msg.task
-		if t == nil {
+		if msg.task == nil {
 			m.err = fmt.Errorf("task not found")
 			return m, nil
 		}
+		t := msg.task
 		m.titleInput.SetValue(t.Title)
 		m.descInput.SetValue(t.Description)
 		m.priority = t.Priority
@@ -190,8 +255,6 @@ func (m EditorModel) Update(msg tea.Msg) (EditorModel, tea.Cmd) {
 			m.dateType = "pick"
 			m.dateInput.SetValue(t.ScheduledDate.Format("2006-01-02"))
 			m.dateValue = t.ScheduledDate
-		} else {
-			m.dateType = "none"
 		}
 		return m, nil
 
@@ -205,7 +268,6 @@ func (m EditorModel) Update(msg tea.Msg) (EditorModel, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
-		// Global save/cancel regardless of active field.
 		if key.Matches(msg, editorKeys.Cancel) {
 			return m, func() tea.Msg { return EditorCancelMsg{} }
 		}
@@ -213,25 +275,28 @@ func (m EditorModel) Update(msg tea.Msg) (EditorModel, tea.Cmd) {
 			return m, m.save()
 		}
 
-		// Tab navigation.
-		if key.Matches(msg, editorKeys.Tab) {
+		// Tab only navigates when NOT in the description field.
+		if key.Matches(msg, editorKeys.NextField) && m.activeField != fieldDescription {
 			m.nextField()
 			return m, nil
 		}
-		if key.Matches(msg, editorKeys.ShiftTab) {
+		if key.Matches(msg, editorKeys.PrevField) && m.activeField != fieldDescription {
 			m.prevField()
 			return m, nil
 		}
 
-		// Route to active field.
 		switch m.activeField {
-
 		case fieldTitle:
 			var cmd tea.Cmd
 			m.titleInput, cmd = m.titleInput.Update(msg)
 			cmds = append(cmds, cmd)
 
 		case fieldDescription:
+			// ctrl+tab exits the description field
+			if msg.String() == "ctrl+down" || msg.String() == "ctrl+j" {
+				m.nextField()
+				return m, nil
+			}
 			var cmd tea.Cmd
 			m.descInput, cmd = m.descInput.Update(msg)
 			cmds = append(cmds, cmd)
@@ -245,12 +310,11 @@ func (m EditorModel) Update(msg tea.Msg) (EditorModel, tea.Cmd) {
 			}
 
 		case fieldDate:
-			if key.Matches(msg, editorKeys.CycleRight) || key.Matches(msg, editorKeys.CycleLeft) {
-				if key.Matches(msg, editorKeys.CycleRight) {
-					m.cycleDateType(1)
-				} else {
-					m.cycleDateType(-1)
-				}
+			if key.Matches(msg, editorKeys.CycleRight) {
+				m.cycleDateType(1)
+			}
+			if key.Matches(msg, editorKeys.CycleLeft) {
+				m.cycleDateType(-1)
 			}
 			if m.dateType == "pick" {
 				var cmd tea.Cmd
@@ -269,7 +333,6 @@ func (m EditorModel) Update(msg tea.Msg) (EditorModel, tea.Cmd) {
 							return editorErrMsg{err}
 						}
 						_ = m.sync.PushNote(n)
-						// Reload notes after creation.
 						notes, err := m.noteRepo.GetByTask(m.taskID)
 						if err != nil {
 							return editorErrMsg{err}
@@ -282,11 +345,11 @@ func (m EditorModel) Update(msg tea.Msg) (EditorModel, tea.Cmd) {
 				m.noteInput, cmd = m.noteInput.Update(msg)
 				cmds = append(cmds, cmd)
 			}
-		}
 
-		// Enter on actions = save.
-		if m.activeField == fieldActions && msg.String() == "enter" {
-			return m, m.save()
+		case fieldActions:
+			if msg.String() == "enter" {
+				return m, m.save()
+			}
 		}
 	}
 
@@ -296,227 +359,197 @@ func (m EditorModel) Update(msg tea.Msg) (EditorModel, tea.Cmd) {
 // ── View ──────────────────────────────────────────────────────────────────────
 
 func (m EditorModel) View() string {
-	formWidth := min(60, m.width-4)
+	formW := min(72, m.width-6)
+	innerW := formW - 8
 
-	headerLabel := "CREATE TASK"
+	var sections []string
+
+	// ── Header ────────────────────────────────────────────────────────────────
+	label := "NEW TASK"
 	if m.mode == "edit" {
-		headerLabel = "EDIT TASK"
+		label = "EDIT TASK"
 	}
-	header := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(colorPrimary).
-		Padding(0, 1).
-		MarginBottom(1).
-		Render(headerLabel)
+	sections = append(sections, editorHeader.Render(label))
+	sections = append(sections, divider.Render(strings.Repeat("─", innerW)))
 
-	var b strings.Builder
-	b.WriteString(header)
-	b.WriteString("\n")
-
+	// ── Error ─────────────────────────────────────────────────────────────────
 	if m.err != nil {
-		b.WriteString(
-			lipgloss.NewStyle().
-				Foreground(colorDanger).
-				Render(fmt.Sprintf("Error: %s", m.err)),
+		sections = append(sections,
+			lipgloss.NewStyle().Foreground(colorDanger).Render("✖  "+m.err.Error()),
 		)
-		b.WriteString("\n\n")
-	}
-	if m.saving {
-		b.WriteString(
-			lipgloss.NewStyle().
-				Foreground(colorMuted).
-				Render("Saving..."),
-		)
-		b.WriteString("\n\n")
 	}
 
-	// ── Title ──────────────────────────────────────────────────────────────
-	b.WriteString(m.renderField("Title", m.titleInput.View(), fieldTitle))
-	b.WriteString("\n")
+	// ── Title ─────────────────────────────────────────────────────────────────
+	sections = append(sections, m.renderTextSection(
+		"TITLE", m.titleInput.View(), fieldTitle, false,
+	))
 
-	// ── Description ────────────────────────────────────────────────────────
-	b.WriteString(m.renderField("Description", m.descInput.View(), fieldDescription))
-	b.WriteString("\n")
+	// ── Description ───────────────────────────────────────────────────────────
+	sections = append(sections, m.renderTextSection(
+		"DESCRIPTION  (ctrl+j to continue)", m.descInput.View(), fieldDescription, true,
+	))
 
-	// ── Priority ───────────────────────────────────────────────────────────
-	pv := m.renderPriorityPicker()
-	b.WriteString(m.renderField("Priority", pv, fieldPriority))
-	b.WriteString("\n")
+	// ── Priority ──────────────────────────────────────────────────────────────
+	sections = append(sections, m.renderInlineSection(
+		"PRIORITY", m.renderPriority(), fieldPriority,
+	))
 
-	// ── Scheduled date ─────────────────────────────────────────────────────
-	dv := m.renderDatePicker()
-	b.WriteString(m.renderField("Schedule", dv, fieldDate))
-	b.WriteString("\n")
+	// ── Schedule ──────────────────────────────────────────────────────────────
+	sections = append(sections, m.renderInlineSection(
+		"SCHEDULE", m.renderDate(), fieldDate,
+	))
 
-	// ── Notes ──────────────────────────────────────────────────────────────
-	b.WriteString(m.renderField("Notes", m.renderNotes(), fieldNotes))
-	b.WriteString("\n")
+	// ── Notes ─────────────────────────────────────────────────────────────────
+	if m.mode == "edit" {
+		sections = append(sections, m.renderTextSection(
+			"NOTES", m.renderNotes(innerW), fieldNotes, false,
+		))
+	}
 
-	// ── Actions ────────────────────────────────────────────────────────────
-	av := m.renderActions()
-	b.WriteString(m.renderField("", av, fieldActions))
-	b.WriteString("\n")
+	// ── Actions ───────────────────────────────────────────────────────────────
+	sections = append(sections, "")
+	sections = append(sections, m.renderActions())
 
-	// Footer hints
-	footer := lipgloss.NewStyle().
-		Foreground(colorSubtext).
-		MarginTop(1).
-		Render("ctrl+s save  ·  esc cancel  ·  tab next field  ·  ← → change values")
+	// ── Footer ────────────────────────────────────────────────────────────────
+	sections = append(sections, divider.Render(strings.Repeat("─", innerW)))
+	sections = append(sections, editorFooter.Render(
+		"ctrl+s save  ·  esc cancel  ·  tab/shift+tab navigate  ·  ←→ change values",
+	))
 
-	content := lipgloss.NewStyle().
-		Width(formWidth).
-		Render(lipgloss.JoinVertical(lipgloss.Left, b.String(), footer))
+	form := lipgloss.NewStyle().Width(formW).Render(
+		lipgloss.JoinVertical(lipgloss.Left, sections...),
+	)
 
 	return lipgloss.Place(
 		m.width, m.height,
 		lipgloss.Center, lipgloss.Center,
-		StyleBox.Render(content),
+		editorContainer.Render(form),
 	)
 }
 
-func (m EditorModel) renderField(label, content string, f editorField) string {
-	var labelStyle func(...string) string
-	if m.activeField == f {
-		labelStyle = lipgloss.NewStyle().
-			Foreground(colorPrimary).
-			Bold(true).
-			Width(12).
-			Render
-	} else {
-		labelStyle = lipgloss.NewStyle().
-			Foreground(colorSubtext).
-			Width(12).
-			Render
+// renderTextSection renders a label above a full-width input/textarea.
+func (m EditorModel) renderTextSection(label, content string, f editorField, isTextarea bool) string {
+	active := m.activeField == f
+
+	lStyle := fieldLabel
+	bStyle := fieldBox
+	if active {
+		lStyle = fieldLabelActive
+		bStyle = fieldBoxActive
 	}
 
-	if label == "" {
-		return fmt.Sprintf("  %s", content)
-	}
-	return lipgloss.JoinHorizontal(lipgloss.Top, labelStyle(label+":"), "  ", content)
+	_ = isTextarea // reserved for future per-type tweaks
+	return lipgloss.JoinVertical(lipgloss.Left,
+		lStyle.Render(label),
+		bStyle.Render(content),
+	)
 }
 
-func (m EditorModel) renderPriorityPicker() string {
-	opts := []model.Priority{model.P3, model.P2, model.P1}
-	segments := make([]string, len(opts))
-	for i, p := range opts {
-		if p == m.priority {
-			segments[i] = PriorityStyle(string(p)).Render(string(p))
+// renderInlineSection renders a label on the left, value on the right.
+func (m EditorModel) renderInlineSection(label, content string, f editorField) string {
+	active := m.activeField == f
+
+	lStyle := fieldLabel.Copy().Width(12)
+	if active {
+		lStyle = fieldLabelActive.Copy().Width(12)
+	}
+
+	return lipgloss.JoinHorizontal(lipgloss.Top,
+		lStyle.Render(label),
+		"  ",
+		content,
+	)
+}
+
+func (m EditorModel) renderPriority() string {
+	type opt struct {
+		p   model.Priority
+		bg  lipgloss.Color
+	}
+	opts := []opt{
+		{model.P1, colorDanger},
+		{model.P2, colorWarning},
+		{model.P3, colorMuted},
+	}
+
+	parts := make([]string, len(opts))
+	for i, o := range opts {
+		if o.p == m.priority {
+			parts[i] = priorityActive.Copy().Background(o.bg).Render(string(o.p))
 		} else {
-			segments[i] = lipgloss.NewStyle().
-				Foreground(colorMuted).
-				Faint(true).
-				Render(string(p))
+			parts[i] = priorityInactive.Render(string(o.p))
 		}
 	}
-	return strings.Join(segments, "  ")
+	return lipgloss.JoinHorizontal(lipgloss.Center, parts...)
 }
 
-func (m EditorModel) renderDatePicker() string {
-	types := []struct {
-		key   string
-		label string
-	}{
+func (m EditorModel) renderDate() string {
+	types := []struct{ key, label string }{
 		{"none", "No date"},
 		{"today", "Today"},
 		{"tomorrow", "Tomorrow"},
 		{"pick", "Pick..."},
 	}
 
-	activeStyle := lipgloss.NewStyle().
-		Foreground(colorPrimary).
-		Bold(true)
-
-	inactiveStyle := lipgloss.NewStyle().
-		Foreground(colorMuted)
-
-	segments := make([]string, len(types))
+	parts := make([]string, len(types))
 	for i, t := range types {
 		if t.key == m.dateType {
-			segments[i] = activeStyle.Render(t.label)
+			parts[i] = dateOptionActive.Render(t.label)
 		} else {
-			segments[i] = inactiveStyle.Render(t.label)
+			parts[i] = dateOptionInactive.Render(t.label)
 		}
 	}
 
-	result := strings.Join(segments, "  ")
-
+	row := lipgloss.JoinHorizontal(lipgloss.Center, strings.Join(parts, "  "))
 	if m.dateType == "pick" {
-		result += "\n" + m.dateInput.View()
+		return lipgloss.JoinVertical(lipgloss.Left, row, m.dateInput.View())
 	}
-	return result
+	return row
 }
 
-func (m EditorModel) renderNotes() string {
-	var parts []string
+func (m EditorModel) renderNotes(innerW int) string {
+	var lines []string
 
-	// Existing notes.
-	if len(m.notes) > 0 {
-		noteStyle := lipgloss.NewStyle().
-			Foreground(colorSubtext).
-			Italic(true)
-
-		for _, n := range m.notes {
-			ts := n.CreatedAt.Format("Jan 2 15:04")
-			line := fmt.Sprintf("  %s  %s", noteStyle.Render(ts), n.Content)
-			parts = append(parts, line)
-		}
+	for _, n := range m.notes {
+		ts := lipgloss.NewStyle().Foreground(colorSubtext).Italic(true).Render(n.CreatedAt.Format("Jan 2 15:04"))
+		lines = append(lines, fmt.Sprintf("%s  %s", ts, n.Content))
 	}
 
-	// New note input (only when editing an existing task).
-	if m.mode == "edit" {
-		if m.activeField == fieldNotes {
-			parts = append(parts, m.noteInput.View())
-		} else {
-			placeholder := lipgloss.NewStyle().
-				Foreground(colorSubtext).
-				Faint(true).
-				Render("enter to add a note...")
-			parts = append(parts, placeholder)
-		}
+	if m.activeField == fieldNotes {
+		lines = append(lines, m.noteInput.View())
+	} else {
+		lines = append(lines,
+			lipgloss.NewStyle().Foreground(colorSubtext).Faint(true).Render("↵ to add a note"),
+		)
 	}
 
-	if len(parts) == 0 {
-		return lipgloss.NewStyle().
-			Foreground(colorSubtext).
-			Faint(true).
-			Render("(notes can be added after creating the task)")
-	}
-	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+	return strings.Join(lines, "\n")
 }
 
 func (m EditorModel) renderActions() string {
-	saveStyle := lipgloss.NewStyle().
-		Foreground(colorSuccess).
-		Bold(true)
-
-	cancelStyle := lipgloss.NewStyle().
-		Foreground(colorSubtext)
-
+	var s lipgloss.Style
 	if m.activeField == fieldActions {
-		saveStyle = saveStyle.
-			Background(colorPrimary).
-			Foreground(lipgloss.Color("#1A1A2E")).
-			Padding(0, 1)
+		s = saveBtnActive
+	} else {
+		s = saveBtn
 	}
-
-	return lipgloss.JoinHorizontal(
-		lipgloss.Center,
-		saveStyle.Render("[ Save ]"),
-		"  ",
-		cancelStyle.Render("esc to cancel"),
+	return lipgloss.JoinHorizontal(lipgloss.Center,
+		s.Render("Save"),
+		"   ",
+		lipgloss.NewStyle().Foreground(colorSubtext).Render("esc to cancel"),
 	)
 }
 
 // ── Navigation ────────────────────────────────────────────────────────────────
 
 func (m *EditorModel) nextField() {
-	m.activeField = (m.activeField + 1) % 6
+	m.activeField = (m.activeField + 1) % fieldCount
 	m.updateFocus()
 }
 
 func (m *EditorModel) prevField() {
 	if m.activeField == 0 {
-		m.activeField = 5
+		m.activeField = fieldCount - 1
 	} else {
 		m.activeField--
 	}
@@ -527,7 +560,6 @@ func (m *EditorModel) updateFocus() {
 	m.titleInput.Blur()
 	m.descInput.Blur()
 	m.noteInput.Blur()
-
 	switch m.activeField {
 	case fieldTitle:
 		m.titleInput.Focus()
@@ -538,32 +570,26 @@ func (m *EditorModel) updateFocus() {
 	}
 }
 
-// ── Value cycling ─────────────────────────────────────────────────────────────
+// ── Cycling ───────────────────────────────────────────────────────────────────
 
 func (m *EditorModel) cyclePriority(dir int) {
 	order := []model.Priority{model.P1, model.P2, model.P3}
-	idx := -1
 	for i, p := range order {
 		if p == m.priority {
-			idx = i
-			break
+			m.priority = order[(i+dir+len(order))%len(order)]
+			return
 		}
 	}
-	idx = (idx + dir + len(order)) % len(order)
-	m.priority = order[idx]
 }
 
 func (m *EditorModel) cycleDateType(dir int) {
 	types := []string{"none", "today", "tomorrow", "pick"}
-	idx := -1
 	for i, t := range types {
 		if t == m.dateType {
-			idx = i
-			break
+			m.dateType = types[(i+dir+len(types))%len(types)]
+			return
 		}
 	}
-	idx = (idx + dir + len(types)) % len(types)
-	m.dateType = types[idx]
 }
 
 // ── Save ──────────────────────────────────────────────────────────────────────
@@ -581,7 +607,6 @@ func (m EditorModel) save() tea.Cmd {
 		Priority:    m.priority,
 	}
 
-	// Resolve scheduled date.
 	switch m.dateType {
 	case "today":
 		now := time.Now()
@@ -596,7 +621,7 @@ func (m EditorModel) save() tea.Cmd {
 		if val != "" {
 			parsed, err := time.Parse("2006-01-02", val)
 			if err != nil {
-				m.err = fmt.Errorf("invalid date format (use YYYY-MM-DD)")
+				m.err = fmt.Errorf("invalid date — use YYYY-MM-DD")
 				return nil
 			}
 			task.ScheduledDate = &parsed

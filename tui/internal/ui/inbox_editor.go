@@ -18,50 +18,53 @@ import (
 type InboxEditorDoneMsg struct{}
 type InboxEditorCancelMsg struct{}
 type inboxItemLoadedMsg struct{ title, description string }
-
-// inboxEditorErrMsg carries a save/load error.
 type inboxEditorErrMsg struct{ err error }
 
 // ── Field indices ─────────────────────────────────────────────────────────────
+
+type inboxEditField int
 
 const (
 	ifieldTitle inboxEditField = iota
 	ifieldDescription
 	ifieldActions
+	ifieldCount = 3
 )
-
-type inboxEditField int
 
 // ── Key bindings ──────────────────────────────────────────────────────────────
 
 type inboxEditKeyMap struct {
-	Tab      key.Binding
-	ShiftTab key.Binding
-	Save     key.Binding
-	Cancel   key.Binding
+	NextField key.Binding
+	PrevField key.Binding
+	Save      key.Binding
+	Cancel    key.Binding
 }
 
 var inboxEditKeys = inboxEditKeyMap{
-	Tab:      key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next field")),
-	ShiftTab: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev field")),
-	Save:     key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("ctrl+s", "save")),
-	Cancel:   key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
+	NextField: key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next field")),
+	PrevField: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev field")),
+	Save:      key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("ctrl+s", "save")),
+	Cancel:    key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
 }
 
 // ── Model ─────────────────────────────────────────────────────────────────────
 
 type InboxEditorModel struct {
-	repo       *repository.InboxRepo
-	sync       *sync.Client
-	itemID     string // empty = new item
-	mode       string // "new" or "edit"
-	titleInput textinput.Model
-	descInput  textarea.Model
+	repo   *repository.InboxRepo
+	sync   *sync.Client
+	itemID string
+	mode   string // "new" | "edit"
+
+	titleInput  textinput.Model
+	descInput   textarea.Model
 	activeField inboxEditField
+
 	width      int
 	height     int
-	err        error
-	saving     bool
+	innerWidth int
+
+	err    error
+	saving bool
 }
 
 func NewInboxEditorModel(repo *repository.InboxRepo, sync *sync.Client) InboxEditorModel {
@@ -71,9 +74,10 @@ func NewInboxEditorModel(repo *repository.InboxRepo, sync *sync.Client) InboxEdi
 	ti.Focus()
 
 	di := textarea.New()
-	di.Placeholder = "Details (optional)"
+	di.Placeholder = "Add details..."
 	di.CharLimit = 2000
-	di.SetHeight(4)
+	di.SetHeight(5)
+	di.ShowLineNumbers = true
 
 	return InboxEditorModel{
 		repo:        repo,
@@ -88,11 +92,12 @@ func NewInboxEditorModel(repo *repository.InboxRepo, sync *sync.Client) InboxEdi
 func (m *InboxEditorModel) SetSize(w, h int) {
 	m.width = w
 	m.height = h
-	m.titleInput.Width = max(20, w-12)
-	m.descInput.SetWidth(max(20, w-12))
+	formW := min(72, w-6)
+	m.innerWidth = formW - 8
+	m.titleInput.Width = m.innerWidth
+	m.descInput.SetWidth(m.innerWidth)
 }
 
-// LoadItem returns a command that fetches an inbox item for editing.
 func (m *InboxEditorModel) LoadItem(itemID string) tea.Cmd {
 	m.itemID = itemID
 	m.mode = "edit"
@@ -139,31 +144,36 @@ func (m InboxEditorModel) Update(msg tea.Msg) (InboxEditorModel, tea.Cmd) {
 			return m, m.save()
 		}
 
-		if key.Matches(msg, inboxEditKeys.Tab) {
+		// Tab only navigates when NOT in description.
+		if key.Matches(msg, inboxEditKeys.NextField) && m.activeField != ifieldDescription {
 			m.nextField()
 			return m, nil
 		}
-		if key.Matches(msg, inboxEditKeys.ShiftTab) {
+		if key.Matches(msg, inboxEditKeys.PrevField) && m.activeField != ifieldDescription {
 			m.prevField()
 			return m, nil
 		}
 
 		switch m.activeField {
-
 		case ifieldTitle:
 			var cmd tea.Cmd
 			m.titleInput, cmd = m.titleInput.Update(msg)
 			cmds = append(cmds, cmd)
 
 		case ifieldDescription:
+			// ctrl+j exits description field downward
+			if msg.String() == "ctrl+j" || msg.String() == "ctrl+down" {
+				m.nextField()
+				return m, nil
+			}
 			var cmd tea.Cmd
 			m.descInput, cmd = m.descInput.Update(msg)
 			cmds = append(cmds, cmd)
-		}
 
-		// Enter on actions = save.
-		if m.activeField == ifieldActions && msg.String() == "enter" {
-			return m, m.save()
+		case ifieldActions:
+			if msg.String() == "enter" {
+				return m, m.save()
+			}
 		}
 	}
 
@@ -173,117 +183,95 @@ func (m InboxEditorModel) Update(msg tea.Msg) (InboxEditorModel, tea.Cmd) {
 // ── View ──────────────────────────────────────────────────────────────────────
 
 func (m InboxEditorModel) View() string {
-	formWidth := min(60, m.width-4)
+	formW := min(72, m.width-6)
+	innerW := formW - 8
 
-	headerLabel := "INBOX CAPTURE"
+	var sections []string
+
+	// ── Header ────────────────────────────────────────────────────────────────
+	label := "CAPTURE"
 	if m.mode == "edit" {
-		headerLabel = "EDIT ITEM"
+		label = "EDIT ITEM"
 	}
-	header := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(colorPrimary).
-		Padding(0, 1).
-		MarginBottom(1).
-		Render(headerLabel)
+	sections = append(sections, editorHeader.Render(label))
+	sections = append(sections, divider.Render(strings.Repeat("─", innerW)))
 
-	var b strings.Builder
-	b.WriteString(header)
-	b.WriteString("\n")
-
+	// ── Error ─────────────────────────────────────────────────────────────────
 	if m.err != nil {
-		b.WriteString(
-			lipgloss.NewStyle().
-				Foreground(colorDanger).
-				Render(fmt.Sprintf("Error: %s", m.err)),
+		sections = append(sections,
+			lipgloss.NewStyle().Foreground(colorDanger).Render("✖  "+m.err.Error()),
 		)
-		b.WriteString("\n\n")
-	}
-	if m.saving {
-		b.WriteString(
-			lipgloss.NewStyle().
-				Foreground(colorMuted).
-				Render("Saving..."),
-		)
-		b.WriteString("\n\n")
 	}
 
-	b.WriteString(m.renderField("Title", m.titleInput.View(), ifieldTitle))
-	b.WriteString("\n")
-	b.WriteString(m.renderField("Description", m.descInput.View(), ifieldDescription))
-	b.WriteString("\n")
-	b.WriteString(m.renderField("", m.renderActions(), ifieldActions))
-	b.WriteString("\n")
+	// ── Title ─────────────────────────────────────────────────────────────────
+	sections = append(sections, m.renderTextSection(
+		"TITLE", m.titleInput.View(), ifieldTitle,
+	))
 
-	footer := lipgloss.NewStyle().
-		Foreground(colorSubtext).
-		MarginTop(1).
-		Render("ctrl+s save  ·  esc cancel  ·  tab next field")
+	// ── Description ───────────────────────────────────────────────────────────
+	sections = append(sections, m.renderTextSection(
+		"DESCRIPTION  (ctrl+j to continue)", m.descInput.View(), ifieldDescription,
+	))
 
-	content := lipgloss.NewStyle().
-		Width(formWidth).
-		Render(lipgloss.JoinVertical(lipgloss.Left, b.String(), footer))
+	// ── Actions ───────────────────────────────────────────────────────────────
+	sections = append(sections, "")
+	sections = append(sections, m.renderActions())
+
+	// ── Footer ────────────────────────────────────────────────────────────────
+	sections = append(sections, divider.Render(strings.Repeat("─", innerW)))
+	sections = append(sections, editorFooter.Render(
+		"ctrl+s save  ·  esc cancel  ·  tab/shift+tab navigate",
+	))
+
+	form := lipgloss.NewStyle().Width(formW).Render(
+		lipgloss.JoinVertical(lipgloss.Left, sections...),
+	)
 
 	return lipgloss.Place(
 		m.width, m.height,
 		lipgloss.Center, lipgloss.Center,
-		StyleBox.Render(content),
+		editorContainer.Render(form),
 	)
 }
 
-func (m InboxEditorModel) renderField(label, content string, f inboxEditField) string {
-	var labelStyle func(...string) string
-	if m.activeField == f {
-		labelStyle = lipgloss.NewStyle().
-			Foreground(colorPrimary).
-			Bold(true).
-			Width(12).
-			Render
-	} else {
-		labelStyle = lipgloss.NewStyle().
-			Foreground(colorSubtext).
-			Width(12).
-			Render
+func (m InboxEditorModel) renderTextSection(label, content string, f inboxEditField) string {
+	active := m.activeField == f
+	lStyle := fieldLabel
+	bStyle := fieldBox
+	if active {
+		lStyle = fieldLabelActive
+		bStyle = fieldBoxActive
 	}
-
-	if label == "" {
-		return fmt.Sprintf("  %s", content)
-	}
-	return lipgloss.JoinHorizontal(lipgloss.Top, labelStyle(label+":"), "  ", content)
+	return lipgloss.JoinVertical(lipgloss.Left,
+		lStyle.Render(label),
+		bStyle.Render(content),
+	)
 }
 
 func (m InboxEditorModel) renderActions() string {
-	saveStyle := lipgloss.NewStyle().
-		Foreground(colorSuccess).
-		Bold(true)
-
-	cancelStyle := lipgloss.NewStyle().
-		Foreground(colorSubtext)
-
+	var s lipgloss.Style
 	if m.activeField == ifieldActions {
-		saveStyle = saveStyle.
-			Background(colorPrimary).
-			Foreground(lipgloss.Color("#1A1A2E")).
-			Padding(0, 1)
+		s = saveBtnActive
+	} else {
+		s = saveBtn
 	}
-
-	return lipgloss.JoinHorizontal(
-		lipgloss.Center,
-		saveStyle.Render("[ Save ]"),
-		"  ",
-		cancelStyle.Render("esc to cancel"),
+	return lipgloss.JoinHorizontal(lipgloss.Center,
+		s.Render("Save"),
+		"   ",
+		lipgloss.NewStyle().Foreground(colorSubtext).Render("esc to cancel"),
 	)
 }
 
 // ── Navigation ────────────────────────────────────────────────────────────────
 
 func (m *InboxEditorModel) nextField() {
-	m.activeField = (m.activeField + 1) % 3
+	m.activeField = (m.activeField + 1) % ifieldCount
 	m.updateFocus()
 }
 
 func (m *InboxEditorModel) prevField() {
 	if m.activeField == 0 {
-		m.activeField = 2
+		m.activeField = ifieldCount - 1
 	} else {
 		m.activeField--
 	}
@@ -312,7 +300,6 @@ func (m InboxEditorModel) save() tea.Cmd {
 
 	m.saving = true
 	m.err = nil
-
 	desc := strings.TrimSpace(m.descInput.Value())
 
 	if m.mode == "edit" {
