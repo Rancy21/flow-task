@@ -7,6 +7,7 @@ import (
 
 	"github.com/Rancy21/flowtask/internal/model"
 	"github.com/Rancy21/flowtask/internal/repository"
+	"github.com/Rancy21/flowtask/internal/sync"
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -31,7 +32,7 @@ type weekKeyMap struct {
 var weekKeys = weekKeyMap{
 	Up:     key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
 	Down:   key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
-	Done:   key.NewBinding(key.WithKeys(" "), key.WithHelp("space", "mark done")),
+	Done:   key.NewBinding(key.WithKeys("space", " "), key.WithHelp("space", "mark done")),
 	Edit:   key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit")),
 	Delete: key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete")),
 }
@@ -48,6 +49,7 @@ type dayGroup struct {
 
 type WeekModel struct {
 	taskRepo *repository.TaskRepo
+	sync     *sync.Client
 	groups   []dayGroup
 	cursor   int // flat index across all groups
 	width    int
@@ -58,9 +60,10 @@ type WeekModel struct {
 	confirmDelete string
 }
 
-func NewWeekModel(taskRepo *repository.TaskRepo) WeekModel {
+func NewWeekModel(taskRepo *repository.TaskRepo, sync *sync.Client) WeekModel {
 	return WeekModel{
 		taskRepo: taskRepo,
+		sync:     sync,
 		loading:  true,
 	}
 }
@@ -168,6 +171,9 @@ func (m WeekModel) handleKey(msg tea.KeyMsg) (WeekModel, tea.Cmd) {
 			if err := m.taskRepo.MarkDone(task.ID); err != nil {
 				return weekErrMsg{err}
 			}
+			if updated, err := m.taskRepo.GetByID(task.ID); err == nil {
+				m.sync.PushTask(updated)
+			}
 			return RefreshMsg{}
 		}
 
@@ -200,6 +206,7 @@ func (m WeekModel) handleConfirm(msg tea.KeyMsg) (WeekModel, tea.Cmd) {
 			if err := m.taskRepo.Delete(id); err != nil {
 				return weekErrMsg{err}
 			}
+			m.sync.DeleteTask(id)
 			return RefreshMsg{}
 		}
 	default:

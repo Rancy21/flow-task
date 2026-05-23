@@ -6,6 +6,7 @@ import (
 
 	"github.com/Rancy21/flowtask/internal/model"
 	"github.com/Rancy21/flowtask/internal/repository"
+	"github.com/Rancy21/flowtask/internal/sync"
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -32,7 +33,7 @@ type todayKeyMap struct {
 var todayKeys = todayKeyMap{
 	Up:     key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
 	Down:   key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
-	Done:   key.NewBinding(key.WithKeys(" "), key.WithHelp("space", "mark done")),
+	Done:   key.NewBinding(key.WithKeys("space", " "), key.WithHelp("space", "mark done")),
 	Edit:   key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit")),
 	Delete: key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete")),
 }
@@ -41,6 +42,7 @@ var todayKeys = todayKeyMap{
 
 type TodayModel struct {
 	taskRepo *repository.TaskRepo
+	sync     *sync.Client
 	tasks    []model.Task
 	cursor   int
 	width    int
@@ -52,9 +54,10 @@ type TodayModel struct {
 	confirmDelete string
 }
 
-func NewTodayModel(taskRepo *repository.TaskRepo) TodayModel {
+func NewTodayModel(taskRepo *repository.TaskRepo, sync *sync.Client) TodayModel {
 	return TodayModel{
 		taskRepo: taskRepo,
+		sync:     sync,
 		loading:  true,
 	}
 }
@@ -137,6 +140,10 @@ func (m TodayModel) handleKey(msg tea.KeyMsg) (TodayModel, tea.Cmd) {
 			if err := m.taskRepo.MarkDone(task.ID); err != nil {
 				return todayErrMsg{err}
 			}
+			// Push the updated task to Supabase.
+			if updated, err := m.taskRepo.GetByID(task.ID); err == nil {
+				m.sync.PushTask(updated)
+			}
 			return RefreshMsg{}
 		}
 
@@ -162,6 +169,8 @@ func (m TodayModel) handleConfirm(msg tea.KeyMsg) (TodayModel, tea.Cmd) {
 			if err := m.taskRepo.Delete(id); err != nil {
 				return todayErrMsg{err}
 			}
+			// Push delete to Supabase.
+			m.sync.DeleteTask(id)
 			return RefreshMsg{}
 		}
 	default:

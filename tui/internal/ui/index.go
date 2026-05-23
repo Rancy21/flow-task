@@ -6,6 +6,7 @@ import (
 
 	"github.com/Rancy21/flowtask/internal/model"
 	"github.com/Rancy21/flowtask/internal/repository"
+	"github.com/Rancy21/flowtask/internal/sync"
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -38,6 +39,7 @@ var inboxKeys = inboxKeyMap{
 
 type InboxModel struct {
 	repo    *repository.InboxRepo
+	sync    *sync.Client
 	items   []model.InboxItem
 	cursor  int
 	width   int
@@ -48,9 +50,10 @@ type InboxModel struct {
 	confirmDelete string
 }
 
-func NewInboxModel(repo *repository.InboxRepo) InboxModel {
+func NewInboxModel(repo *repository.InboxRepo, sync *sync.Client) InboxModel {
 	return InboxModel{
 		repo:    repo,
+		sync:    sync,
 		loading: true,
 	}
 }
@@ -150,6 +153,7 @@ func (m InboxModel) handleConfirm(msg tea.KeyMsg) (InboxModel, tea.Cmd) {
 			if err := m.repo.Delete(id); err != nil {
 				return inboxErrMsg{err}
 			}
+			m.sync.DeleteInboxItem(id)
 			return RefreshMsg{}
 		}
 	default:

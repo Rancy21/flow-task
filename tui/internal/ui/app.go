@@ -103,10 +103,10 @@ func NewApp(
 		noteRepo:  noteRepo,
 		inboxRepo: inboxRepo,
 		sync:      sync,
-		today:     NewTodayModel(taskRepo),
-		week:      NewWeekModel(taskRepo),
-		inbox:     NewInboxModel(inboxRepo),
-		notes:     NewNotesModel(taskRepo, noteRepo),
+		today:     NewTodayModel(taskRepo, sync),
+		week:      NewWeekModel(taskRepo, sync),
+		inbox:     NewInboxModel(inboxRepo, sync),
+		notes:     NewNotesModel(taskRepo, noteRepo, sync),
 		editor:      NewEditorModel(taskRepo, noteRepo, sync),
 		inboxEditor: NewInboxEditorModel(inboxRepo, sync),
 	}
@@ -157,27 +157,35 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, tea.Batch(cmds...)
 		}
 
+		// Handle global keys.
+		globallyHandled := false
 		switch {
 		case key.Matches(msg, keys.Quit):
 			return a, tea.Quit
 		case key.Matches(msg, keys.Tab1):
 			a.activeTab = TabToday
+			globallyHandled = true
 		case key.Matches(msg, keys.Tab2):
 			a.activeTab = TabWeek
+			globallyHandled = true
 		case key.Matches(msg, keys.Tab3):
 			a.activeTab = TabInbox
+			globallyHandled = true
 		case key.Matches(msg, keys.Tab4):
 			a.activeTab = TabNotes
+			globallyHandled = true
 		case key.Matches(msg, keys.TabNext):
 			a.activeTab = (a.activeTab + 1) % 4
+			globallyHandled = true
 		case key.Matches(msg, keys.TabPrev):
 			if a.activeTab == 0 {
 				a.activeTab = 3
 			} else {
 				a.activeTab--
 			}
+			globallyHandled = true
 		case key.Matches(msg, keys.New):
-			// In inbox tab, n opens the inbox capture editor.
+			globallyHandled = true
 			if a.activeTab == TabInbox {
 				a.inboxEditorOpen = true
 				a.inboxEditor = NewInboxEditorModel(a.inboxRepo, a.sync)
@@ -189,6 +197,22 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.editor.SetSize(a.width, a.contentHeight())
 				cmds = append(cmds, a.editor.Init())
 			}
+		}
+
+		// Always forward to active tab unless globally consumed.
+		if !globallyHandled {
+			var cmd tea.Cmd
+			switch a.activeTab {
+			case TabToday:
+				a.today, cmd = a.today.Update(msg)
+			case TabWeek:
+				a.week, cmd = a.week.Update(msg)
+			case TabInbox:
+				a.inbox, cmd = a.inbox.Update(msg)
+			case TabNotes:
+				a.notes, cmd = a.notes.Update(msg)
+			}
+			cmds = append(cmds, cmd)
 		}
 
 	// ── Task editor messages ─────────────────────────────────────────────────
@@ -232,32 +256,20 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case InboxEditorCancelMsg:
 		a.inboxEditorOpen = false
-	}
 
-	// Route remaining messages.
-	if a.inboxEditorOpen {
-		var cmd tea.Cmd
-		a.inboxEditor, cmd = a.inboxEditor.Update(msg)
-		cmds = append(cmds, cmd)
-	} else if a.editorOpen {
-		var cmd tea.Cmd
-		a.editor, cmd = a.editor.Update(msg)
-		cmds = append(cmds, cmd)
-	} else {
-		if _, isKey := msg.(tea.KeyMsg); isKey {
+	// Broadcast non-key messages. Editor models receive first, otherwise route to tabs.
+	default:
+		if a.editorOpen {
 			var cmd tea.Cmd
-			switch a.activeTab {
-			case TabToday:
-				a.today, cmd = a.today.Update(msg)
-			case TabWeek:
-				a.week, cmd = a.week.Update(msg)
-			case TabInbox:
-				a.inbox, cmd = a.inbox.Update(msg)
-			case TabNotes:
-				a.notes, cmd = a.notes.Update(msg)
-			}
+			a.editor, cmd = a.editor.Update(msg)
 			cmds = append(cmds, cmd)
-		} else {
+		}
+		if a.inboxEditorOpen {
+			var cmd tea.Cmd
+			a.inboxEditor, cmd = a.inboxEditor.Update(msg)
+			cmds = append(cmds, cmd)
+		}
+		if !a.editorOpen && !a.inboxEditorOpen {
 			var cmd tea.Cmd
 			a.today, cmd = a.today.Update(msg)
 			cmds = append(cmds, cmd)

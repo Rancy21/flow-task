@@ -7,6 +7,7 @@ import (
 
 	"github.com/Rancy21/flowtask/internal/model"
 	"github.com/Rancy21/flowtask/internal/repository"
+	"github.com/Rancy21/flowtask/internal/sync"
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -45,6 +46,7 @@ var notesKeys = notesKeyMap{
 type NotesModel struct {
 	taskRepo *repository.TaskRepo
 	noteRepo *repository.NoteRepo
+	sync     *sync.Client
 	notes    []noteWithTask
 	cursor   int
 	width    int
@@ -55,10 +57,11 @@ type NotesModel struct {
 	confirmDelete string
 }
 
-func NewNotesModel(taskRepo *repository.TaskRepo, noteRepo *repository.NoteRepo) NotesModel {
+func NewNotesModel(taskRepo *repository.TaskRepo, noteRepo *repository.NoteRepo, sync *sync.Client) NotesModel {
 	return NotesModel{
 		taskRepo: taskRepo,
 		noteRepo: noteRepo,
+		sync:     sync,
 		loading:  true,
 	}
 }
@@ -76,7 +79,7 @@ func (m NotesModel) Init() tea.Cmd {
 
 func (m NotesModel) load() tea.Cmd {
 	return func() tea.Msg {
-		notes, err := m.noteRepo.GetAll()
+		notes, err := m.noteRepo.GetAllActive()
 		if err != nil {
 			return notesErrMsg{err}
 		}
@@ -168,6 +171,7 @@ func (m NotesModel) handleConfirm(msg tea.KeyMsg) (NotesModel, tea.Cmd) {
 			if err := m.noteRepo.Delete(id); err != nil {
 				return notesErrMsg{err}
 			}
+			m.sync.DeleteNote(id)
 			return RefreshMsg{}
 		}
 	default:
