@@ -19,3 +19,7 @@ clean:
 .PHONY: run
 run:
 	go run ./cmd/
+
+.PHONY: binary
+binary:
+	go build -ldflags="-s -w" -o /home/larryck/.local/bin/flowtask ./cmd/main.go
