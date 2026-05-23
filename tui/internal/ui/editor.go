@@ -559,12 +559,15 @@ func (m *EditorModel) prevField() {
 func (m *EditorModel) updateFocus() {
 	m.titleInput.Blur()
 	m.descInput.Blur()
+	m.dateInput.Blur()
 	m.noteInput.Blur()
 	switch m.activeField {
 	case fieldTitle:
 		m.titleInput.Focus()
 	case fieldDescription:
 		m.descInput.Focus()
+	case fieldDate:
+		m.dateInput.Focus()
 	case fieldNotes:
 		m.noteInput.Focus()
 	}
